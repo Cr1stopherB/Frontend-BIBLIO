@@ -44,25 +44,32 @@ function App() {
 
       try {
         const token = auth.user?.id_token;
-        if (!token) {
-          setApiResponse("Error: No hay un token de sesión activo.");
-          setLoadingApi(false);
-          return;
-        }
+        const apiGatewayUrl = import.meta.env.VITE_API_URL ?? "https://jsmyy5o0id.execute-api.us-east-1.amazonaws.com";
 
-        const apiGatewayUrl =
-          "https://yxpnxitdnh.execute-api.us-east-2.amazonaws.com";
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+
+        if (token) {
+          headers["Authorization"] = `Bearer ${token}`;
+        }
 
         const response = await fetch(`${apiGatewayUrl}${endpoint}`, {
           method: metodo,
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
+          headers: headers,
         });
 
-        const data = await response.json();
-        setApiResponse(JSON.stringify(data, null, 2));
+        // 1. Obtenemos la respuesta como texto plano primero
+        const textData = await response.text();
+
+        try {
+          // 2. Si es JSON válido, lo formateamos
+          const data = JSON.parse(textData);
+          setApiResponse(JSON.stringify(data, null, 2));
+        } catch {
+          // 3. Si viene un HTML/texto de error de API Gateway (ej. 403 Forbidden), mostramos la respuesta limpia
+          setApiResponse(`[HTTP Status ${response.status}]\n${textData || response.statusText}`);
+        }
       } catch (error: any) {
         setApiResponse(`Error de red o conexión: ${error.message}`);
       } finally {
@@ -83,9 +90,9 @@ function App() {
           </div>
 
           <nav style={{ flex: 1, marginTop: 16 }}>
-            <div style={s.navActive}>📊 Dashboard</div>
-            <div style={s.navItem}>📦 Productos</div>
-            <div style={s.navItem}>👥 Usuarios</div>
+            <div style={s.navActive}>Dashboard</div>
+            <div style={s.navItem}>Productos</div>
+            <div style={s.navItem}>Usuarios</div>
             {isAdmin && <div style={s.navItem}>⚙️ Configuración</div>}
           </nav>
 
@@ -151,21 +158,21 @@ function App() {
 
           <section style={s.card}>
             <h3 style={s.cardTitle}>
-              🌐 Interactuar con Backend · API Gateway
+              Interactuar con Backend · API Gateway
             </h3>
             <p style={{ fontSize: 13, color: "#94a3b8", margin: "0 0 16px" }}>
               Endpoints protegidos con <code style={s.inlineCode}>@SecuredRoles</code>:
             </p>
 
             <div style={s.btnGroup}>
-              <button onClick={() => consultarBackend("/health", "GET")} style={s.btnSuccess}>
-                🟢 Ver Estado del Backend
+              <button onClick={() => consultarBackend("/api/health", "GET")} style={s.btnSuccess}>
+                Ver Estado del Backend
               </button>
-              <button onClick={() => consultarBackend("/api/productos", "POST")} style={s.btnPrimary}>
-                ➕ Crear Producto
+              <button onClick={() => consultarBackend("/api/books", "GET")} style={s.btnPrimary}>
+                Listar Libros
               </button>
-              <button onClick={() => consultarBackend("/api/productos/1", "DELETE")} style={s.btnDanger}>
-                🗑️ Eliminar Producto
+              <button onClick={() => consultarBackend("/api/books/1", "DELETE")} style={s.btnDanger}>
+                Eliminar Libro
               </button>
             </div>
 
