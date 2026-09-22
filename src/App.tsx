@@ -1,18 +1,83 @@
 import { useAuth } from "react-oidc-context";
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
+
+interface Book {
+  id: string;
+  title: string;
+  author: string;
+  isbn: string;
+  availableCopies: number;
+}
+
+const API_URL =
+  (import.meta.env.VITE_API_URL as string) ??
+  "https://jsmyy5o0id.execute-api.us-east-1.amazonaws.com";
 
 function App() {
   const auth = useAuth();
-  const [apiResponse, setApiResponse] = useState<string>("");
-  const [loadingApi, setLoadingApi] = useState<boolean>(false);
+  const [books, setBooks] = useState<Book[]>([]);
+  const [loadingBooks, setLoadingBooks] = useState(false);
+  const [actionMsg, setActionMsg] = useState<{ text: string; ok: boolean } | null>(null);
 
-  // 1. Estados de carga y error del flujo de Cognito
+  // ──────────────────────────────────────────────
+  // Helpers
+  // ──────────────────────────────────────────────
+  const authHeaders = useCallback((): Record<string, string> => {
+    const token = auth.user?.id_token;
+    return {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+  }, [auth.user]);
+
+  const notify = (text: string, ok: boolean) => {
+    setActionMsg({ text, ok });
+    setTimeout(() => setActionMsg(null), 3500);
+  };
+
+  const fetchBooks = useCallback(async () => {
+    setLoadingBooks(true);
+    try {
+      const res = await fetch(`${API_URL}/api/books`, { headers: authHeaders() });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setBooks(await res.json());
+    } catch (e: any) {
+      notify(`Error al cargar libros: ${e.message}`, false);
+    } finally {
+      setLoadingBooks(false);
+    }
+  }, [authHeaders]);
+
+  useEffect(() => {
+    if (auth.isAuthenticated) fetchBooks();
+  }, [auth.isAuthenticated, fetchBooks]);
+
+  const deleteBook = async (id: string) => {
+    try {
+      const res = await fetch(`${API_URL}/api/books/${id}`, {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
+      if (res.status === 204) {
+        notify("Libro eliminado.", true);
+        fetchBooks();
+      } else {
+        notify(`Error al eliminar: HTTP ${res.status}`, false);
+      }
+    } catch (e: any) {
+      notify(`Error de red: ${e.message}`, false);
+    }
+  };
+
+  // ──────────────────────────────────────────────
+  // Estados de Cognito
+  // ──────────────────────────────────────────────
   if (auth.isLoading) {
     return (
       <div style={s.center}>
         <div style={s.card}>
-          <div style={s.spinner}></div>
-          <h3 style={{ margin: 0, color: "#e2e8f0" }}>Cargando sesión...</h3>
+          <div style={s.spinner} />
+          <p style={{ margin: 0, color: "#94a3b8" }}>Cargando sesión...</p>
         </div>
       </div>
     );
@@ -22,9 +87,9 @@ function App() {
     return (
       <div style={s.center}>
         <div style={s.card}>
-          <h3 style={{ color: "#f87171" }}>Error al autenticar</h3>
-          <p style={{ color: "#94a3b8" }}>{auth.error.message}</p>
-          <button onClick={() => auth.signinRedirect()} style={s.btn}>
+          <h3 style={{ color: "#f87171", margin: "0 0 8px" }}>Error de autenticación</h3>
+          <p style={{ color: "#94a3b8", margin: "0 0 16px" }}>{auth.error.message}</p>
+          <button onClick={() => auth.signinRedirect()} style={s.btnPrimary}>
             Reintentar
           </button>
         </div>
@@ -32,224 +97,440 @@ function App() {
     );
   }
 
-  // 2. Vista si el usuario ya inició sesión
+  // ──────────────────────────────────────────────
+  // Vista autenticada
+  // ──────────────────────────────────────────────
   if (auth.isAuthenticated) {
-    const roles = (auth.user?.profile["cognito:groups"] as string[]) || [];
-    const email = auth.user?.profile.email;
-    const isAdmin = roles.includes("Admin");
+    const groups = (auth.user?.profile["cognito:groups"] as string[]) ?? [];
+    const email = auth.user?.profile.email as string;
+    const isAdmin = groups.includes("Admin");
+    const isColaborador = groups.includes("Colaborador");
+    const canCreate = isAdmin || isColaborador;
+    const canModify = isAdmin;
 
-    const consultarBackend = async (endpoint: string, metodo: string = "GET") => {
-      setLoadingApi(true);
-      setApiResponse("");
-
-      try {
-        const token = auth.user?.id_token;
-        const apiGatewayUrl = import.meta.env.VITE_API_URL ?? "https://jsmyy5o0id.execute-api.us-east-1.amazonaws.com";
-
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json",
-        };
-
-        if (token) {
-          headers["Authorization"] = `Bearer ${token}`;
-        }
-
-        const response = await fetch(`${apiGatewayUrl}${endpoint}`, {
-          method: metodo,
-          headers: headers,
-        });
-
-        // 1. Obtenemos la respuesta como texto plano primero
-        const textData = await response.text();
-
-        try {
-          // 2. Si es JSON válido, lo formateamos
-          const data = JSON.parse(textData);
-          setApiResponse(JSON.stringify(data, null, 2));
-        } catch {
-          // 3. Si viene un HTML/texto de error de API Gateway (ej. 403 Forbidden), mostramos la respuesta limpia
-          setApiResponse(`[HTTP Status ${response.status}]\n${textData || response.statusText}`);
-        }
-      } catch (error: any) {
-        setApiResponse(`Error de red o conexión: ${error.message}`);
-      } finally {
-        setLoadingApi(false);
-      }
-    };
+    const roleLabel = isAdmin
+      ? "Administrador"
+      : isColaborador
+      ? "Colaborador"
+      : "Cliente";
 
     return (
       <div style={s.shell}>
-        {/* Sidebar */}
+        {/* ── Sidebar ── */}
         <aside style={s.sidebar}>
           <div style={s.brand}>
-            <div style={s.brandMark}>N</div>
+            <div style={s.brandMark}>B</div>
             <div>
-              <div style={{ fontWeight: 700 }}>Nexus</div>
-              <div style={{ fontSize: 11, color: "#64748b" }}>CONTROL DE ACCESO</div>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>BiblioNexus</div>
+              <div style={{ fontSize: 11, color: "#64748b", letterSpacing: 1 }}>
+                BIBLIOTECA DIGITAL
+              </div>
             </div>
           </div>
 
-          <nav style={{ flex: 1, marginTop: 16 }}>
-            <div style={s.navActive}>Dashboard</div>
-            <div style={s.navItem}>Productos</div>
-            <div style={s.navItem}>Usuarios</div>
-            {isAdmin && <div style={s.navItem}>⚙️ Configuración</div>}
+          <nav style={{ flex: 1, marginTop: 20 }}>
+            <div style={s.navActive}>Catalogo</div>
+            {canCreate && <div style={s.navItem}>Agregar libro</div>}
+            {isAdmin && <div style={s.navItem}>Configuracion</div>}
           </nav>
 
           <div style={s.sidebarFooter}>
             <div style={s.avatar}>{email?.[0]?.toUpperCase()}</div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={s.sidebarEmail}>{email}</div>
-              <div style={{ fontSize: 11, color: "#64748b" }}>
-                {roles.join(", ") || "Sin rol"}
-              </div>
+              <div style={{ fontSize: 11, color: "#64748b" }}>{roleLabel}</div>
             </div>
-            <button onClick={() => auth.removeUser()} style={s.iconBtn} title="Cerrar Sesión">
-              ⏻
+            <button
+              onClick={() => auth.removeUser()}
+              style={s.iconBtn}
+              title="Cerrar sesion"
+            >
+              X
             </button>
           </div>
         </aside>
 
-        {/* Main */}
+        {/* ── Main ── */}
         <main style={s.main}>
           <header style={s.topbar}>
             <div>
-              <h1 style={s.pageTitle}>Panel de Control</h1>
-              <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 14 }}>
-                Bienvenido, {email?.split("@")[0]}
+              <h1 style={s.pageTitle}>Catalogo de Libros</h1>
+              <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 13 }}>
+                {isAdmin
+                  ? "Acceso total: puede ver, agregar, editar y eliminar libros."
+                  : isColaborador
+                  ? "Puede ver y agregar libros."
+                  : "Solo lectura. Consulta el catalogo disponible."}
               </p>
             </div>
-            <div style={s.statusPill}>
-              <span style={s.statusDot}></span> Sesión activa
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={s.roleBadge}>{roleLabel}</span>
+              <button onClick={fetchBooks} style={s.btnOutline} disabled={loadingBooks}>
+                {loadingBooks ? "Actualizando..." : "Actualizar"}
+              </button>
             </div>
           </header>
 
+          {/* Notificacion */}
+          {actionMsg && (
+            <div style={{ ...s.alert, ...(actionMsg.ok ? s.alertOk : s.alertErr) }}>
+              {actionMsg.text}
+            </div>
+          )}
+
+          {/* Tabla de libros */}
           <section style={s.card}>
-            <h3 style={s.cardTitle}>👤 Perfil del Usuario</h3>
-            <div style={s.row}>
-              <span style={s.rowLabel}>📧 Email</span>
-              <span style={s.rowValue}>{email}</span>
-            </div>
-            <div style={s.row}>
-              <span style={s.rowLabel}>🔑 Roles</span>
-              <div>
-                {roles.length > 0 ? (
-                  roles.map((r) => (
-                    <span key={r} style={s.badge}>{r}</span>
-                  ))
-                ) : (
-                  <span style={s.noneBadge}>Ninguno</span>
-                )}
+            {loadingBooks && books.length === 0 ? (
+              <p style={{ color: "#64748b", textAlign: "center", padding: 32 }}>
+                Cargando libros...
+              </p>
+            ) : books.length === 0 ? (
+              <p style={{ color: "#64748b", textAlign: "center", padding: 32 }}>
+                No hay libros disponibles.
+              </p>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={s.table}>
+                  <thead>
+                    <tr>
+                      <th style={s.th}>Titulo</th>
+                      <th style={s.th}>Autor</th>
+                      <th style={s.th}>ISBN</th>
+                      <th style={s.th}>Copias</th>
+                      {canModify && <th style={s.th}>Acciones</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {books.map((book, i) => (
+                      <tr key={book.id} style={i % 2 === 0 ? s.trEven : s.trOdd}>
+                        <td style={s.td}>{book.title}</td>
+                        <td style={s.td}>{book.author}</td>
+                        <td style={{ ...s.td, ...s.tdMono }}>{book.isbn}</td>
+                        <td style={{ ...s.td, textAlign: "center" }}>
+                          <span
+                            style={{
+                              ...s.copiesBadge,
+                              ...(book.availableCopies === 0 ? s.copiesZero : {}),
+                            }}
+                          >
+                            {book.availableCopies}
+                          </span>
+                        </td>
+                        {canModify && (
+                          <td style={s.td}>
+                            <button
+                              onClick={() => deleteBook(book.id)}
+                              style={s.btnDanger}
+                            >
+                              Eliminar
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            </div>
+            )}
           </section>
 
-          {/* Vista condicional por rol */}
+          {/* Panel admin */}
           {isAdmin && (
             <section style={{ ...s.card, ...s.adminCard }}>
-              <h4 style={{ color: "#fca5a5", margin: 0 }}>
-                ⚙️ Panel Exclusivo Admin
-              </h4>
-              <p style={{ fontSize: 13, color: "#fecaca", margin: "8px 0 0" }}>
-                Solo miembros del grupo <strong>Admin</strong> en Cognito ven esta sección.
+              <h3 style={{ color: "#fca5a5", margin: "0 0 8px", fontSize: 15 }}>
+                Panel Administrador
+              </h3>
+              <p style={{ fontSize: 13, color: "#fecaca", margin: 0 }}>
+                Solo los miembros del grupo <strong>Admin</strong> en Cognito ven esta
+                seccion. Desde aqui puede gestionar usuarios y configurar el sistema.
               </p>
             </section>
           )}
-
-          <section style={s.card}>
-            <h3 style={s.cardTitle}>
-              Interactuar con Backend · API Gateway
-            </h3>
-            <p style={{ fontSize: 13, color: "#94a3b8", margin: "0 0 16px" }}>
-              Endpoints protegidos con <code style={s.inlineCode}>@SecuredRoles</code>:
-            </p>
-
-            <div style={s.btnGroup}>
-              <button onClick={() => consultarBackend("/api/health", "GET")} style={s.btnSuccess}>
-                Ver Estado del Backend
-              </button>
-              <button onClick={() => consultarBackend("/api/books", "GET")} style={s.btnPrimary}>
-                Listar Libros
-              </button>
-              <button onClick={() => consultarBackend("/api/books/1", "DELETE")} style={s.btnDanger}>
-                Eliminar Libro
-              </button>
-            </div>
-
-            <div style={s.terminal}>
-              <div style={s.termBar}>
-                <span style={{ ...s.dot, background: "#ef4444" }}></span>
-                <span style={{ ...s.dot, background: "#f59e0b" }}></span>
-                <span style={{ ...s.dot, background: "#22c55e" }}></span>
-                <span style={{ marginLeft: 8, fontSize: 12, color: "#64748b" }}>response.log</span>
-                {loadingApi && <span style={{ marginLeft: "auto", fontSize: 11, color: "#38bdf8" }}>● ejecutando…</span>}
-              </div>
-              <pre style={s.termBody}>
-                {loadingApi
-                  ? "Consultando pasarela de AWS..."
-                  : apiResponse || "// Ninguna petición enviada aún."}
-              </pre>
-            </div>
-          </section>
         </main>
       </div>
     );
   }
 
-  // 3. Vista inicial si el usuario no está logueado
+  // ──────────────────────────────────────────────
+  // Vista login
+  // ──────────────────────────────────────────────
   return (
     <div style={s.center}>
       <div style={s.card}>
-        <div style={{ fontSize: 44, marginBottom: 12 }}>🔐</div>
-        <h2 style={{ margin: "0 0 8px", color: "#f1f5f9" }}>Bienvenido a Nexus</h2>
-        <p style={{ color: "#94a3b8", marginBottom: 24 }}>
-          Accede con tu cuenta gestionada por AWS Cognito.
+        <div style={s.brandMark}>B</div>
+        <h2 style={{ margin: "16px 0 6px", color: "#f1f5f9", fontSize: 22 }}>
+          BiblioNexus
+        </h2>
+        <p style={{ color: "#94a3b8", marginBottom: 24, fontSize: 14 }}>
+          Sistema de gestion de biblioteca. Accede con tu cuenta de AWS Cognito.
         </p>
-        <button onClick={() => auth.signinRedirect()} style={s.btn}>
-          Ingresar con Cognito →
+        <button onClick={() => auth.signinRedirect()} style={s.btnPrimary}>
+          Iniciar sesion
         </button>
       </div>
     </div>
   );
 }
 
-// 🎨 Estilos — tema oscuro con sidebar
+// ──────────────────────────────────────────────
+// Estilos
+// ──────────────────────────────────────────────
 const s: { [k: string]: React.CSSProperties } = {
-  center: { display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", background: "#0b1120", color: "#e2e8f0", fontFamily: "system-ui, sans-serif" },
-  card: { background: "rgba(17,24,39,.85)", border: "1px solid rgba(148,163,184,.15)", borderRadius: 16, padding: 24, marginBottom: 20 },
-  spinner: { width: 20, height: 20, border: "3px solid #334155", borderTopColor: "#6366f1", borderRadius: "50%", marginBottom: 12 },
-  btn: { width: "100%", padding: "13px 20px", fontSize: 15, fontWeight: 600, color: "#fff", background: "linear-gradient(135deg,#6366f1,#8b5cf6)", border: "none", borderRadius: 10, cursor: "pointer" },
-  shell: { display: "flex", minHeight: "100vh", background: "#0b1120", color: "#e2e8f0", fontFamily: "system-ui, sans-serif" },
-  sidebar: { width: 260, flexShrink: 0, background: "#0f172a", borderRight: "1px solid rgba(148,163,184,.1)", display: "flex", flexDirection: "column", padding: 24 },
-  brand: { display: "flex", alignItems: "center", gap: 12, paddingBottom: 20, borderBottom: "1px solid rgba(148,163,184,.1)" },
-  brandMark: { width: 40, height: 40, borderRadius: 12, background: "linear-gradient(135deg,#6366f1,#8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, fontWeight: 800, color: "#fff" },
-  navItem: { padding: "11px 14px", borderRadius: 10, color: "#94a3b8", fontSize: 14, marginBottom: 4, cursor: "pointer" },
-  navActive: { padding: "11px 14px", borderRadius: 10, fontSize: 14, fontWeight: 600, color: "#fff", background: "rgba(99,102,241,.2)", border: "1px solid rgba(99,102,241,.4)", marginBottom: 4 },
-  sidebarFooter: { display: "flex", alignItems: "center", gap: 10, paddingTop: 16, borderTop: "1px solid rgba(148,163,184,.1)" },
-  avatar: { width: 36, height: 36, borderRadius: "50%", background: "linear-gradient(135deg,#6366f1,#8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, color: "#fff", flexShrink: 0 },
-  sidebarEmail: { fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
-  iconBtn: { background: "rgba(148,163,184,.1)", border: "1px solid rgba(148,163,184,.2)", color: "#94a3b8", width: 32, height: 32, borderRadius: 8, cursor: "pointer", flexShrink: 0 },
-  main: { flex: 1, padding: "32px 40px", maxWidth: 1100, margin: "0 auto", width: "100%", boxSizing: "border-box" },
-  topbar: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 28, flexWrap: "wrap", gap: 16 },
-  pageTitle: { margin: 0, fontSize: 26, fontWeight: 700, color: "#f8fafc" },
-  statusPill: { display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 999, background: "rgba(34,197,94,.1)", border: "1px solid rgba(34,197,94,.3)", color: "#4ade80", fontSize: 12, fontWeight: 600 },
-  statusDot: { width: 8, height: 8, borderRadius: "50%", background: "#22c55e" },
-  cardTitle: { margin: "0 0 16px", fontSize: 16, fontWeight: 600, color: "#f1f5f9" },
-  row: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid rgba(148,163,184,.08)", fontSize: 13 },
-  rowLabel: { color: "#64748b" },
-  rowValue: { color: "#e2e8f0", fontWeight: 600 },
-  badge: { padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: "rgba(99,102,241,.2)", border: "1px solid rgba(99,102,241,.4)", color: "#c7d2fe", marginLeft: 6 },
-  noneBadge: { color: "#64748b", fontStyle: "italic", fontSize: 12 },
-  adminCard: { background: "linear-gradient(135deg,rgba(239,68,68,.12),rgba(139,92,246,.12))", border: "1px solid rgba(239,68,68,.35)" },
-  inlineCode: { background: "rgba(99,102,241,.15)", color: "#c7d2fe", padding: "2px 7px", borderRadius: 5, fontSize: 12 },
-  btnGroup: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 20 },
-  btnSuccess: { padding: "10px 16px", borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: "pointer", background: "rgba(34,197,94,.12)", border: "1px solid rgba(34,197,94,.4)", color: "#4ade80" },
-  btnPrimary: { padding: "10px 16px", borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: "pointer", background: "rgba(99,102,241,.15)", border: "1px solid rgba(99,102,241,.4)", color: "#c7d2fe" },
-  btnDanger: { padding: "10px 16px", borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: "pointer", background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.4)", color: "#fca5a5" },
-  terminal: { borderRadius: 12, overflow: "hidden", border: "1px solid rgba(148,163,184,.15)", background: "#020617" },
-  termBar: { display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", background: "#0f172a", borderBottom: "1px solid rgba(148,163,184,.1)" },
-  dot: { width: 10, height: 10, borderRadius: "50%", display: "inline-block" },
-  termBody: { margin: 0, padding: 16, color: "#4ade80", fontSize: 13, fontFamily: "monospace", overflowX: "auto", minHeight: 60, maxHeight: 260 },
+  // Layout
+  center: {
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    minHeight: "100vh",
+    background: "#0b1120",
+    color: "#e2e8f0",
+    fontFamily: "'Inter', system-ui, sans-serif",
+  },
+  shell: {
+    display: "flex",
+    minHeight: "100vh",
+    background: "#0b1120",
+    color: "#e2e8f0",
+    fontFamily: "'Inter', system-ui, sans-serif",
+  },
+
+  // Sidebar
+  sidebar: {
+    width: 240,
+    flexShrink: 0,
+    background: "#0f172a",
+    borderRight: "1px solid rgba(148,163,184,.1)",
+    display: "flex",
+    flexDirection: "column",
+    padding: "24px 16px",
+  },
+  brand: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    paddingBottom: 20,
+    borderBottom: "1px solid rgba(148,163,184,.1)",
+  },
+  brandMark: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    background: "linear-gradient(135deg,#6366f1,#8b5cf6)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 18,
+    fontWeight: 800,
+    color: "#fff",
+    flexShrink: 0,
+  },
+  navItem: {
+    padding: "10px 12px",
+    borderRadius: 8,
+    color: "#64748b",
+    fontSize: 14,
+    marginBottom: 2,
+    cursor: "pointer",
+  },
+  navActive: {
+    padding: "10px 12px",
+    borderRadius: 8,
+    fontSize: 14,
+    fontWeight: 600,
+    color: "#fff",
+    background: "rgba(99,102,241,.18)",
+    border: "1px solid rgba(99,102,241,.35)",
+    marginBottom: 2,
+  },
+  sidebarFooter: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    paddingTop: 16,
+    borderTop: "1px solid rgba(148,163,184,.1)",
+  },
+  avatar: {
+    width: 34,
+    height: 34,
+    borderRadius: "50%",
+    background: "linear-gradient(135deg,#6366f1,#8b5cf6)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontWeight: 700,
+    color: "#fff",
+    flexShrink: 0,
+    fontSize: 14,
+  },
+  sidebarEmail: {
+    fontSize: 12,
+    fontWeight: 600,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+  iconBtn: {
+    background: "rgba(148,163,184,.1)",
+    border: "1px solid rgba(148,163,184,.15)",
+    color: "#94a3b8",
+    width: 30,
+    height: 30,
+    borderRadius: 7,
+    cursor: "pointer",
+    flexShrink: 0,
+    fontSize: 11,
+    fontWeight: 700,
+  },
+
+  // Main
+  main: {
+    flex: 1,
+    padding: "32px 36px",
+    maxWidth: 1100,
+    margin: "0 auto",
+    width: "100%",
+    boxSizing: "border-box",
+  },
+  topbar: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 24,
+    flexWrap: "wrap",
+    gap: 16,
+  },
+  pageTitle: { margin: 0, fontSize: 24, fontWeight: 700, color: "#f8fafc" },
+
+  // Card
+  card: {
+    background: "rgba(17,24,39,.85)",
+    border: "1px solid rgba(148,163,184,.12)",
+    borderRadius: 14,
+    padding: 24,
+    marginBottom: 20,
+  },
+  adminCard: {
+    background: "linear-gradient(135deg,rgba(239,68,68,.08),rgba(139,92,246,.08))",
+    border: "1px solid rgba(239,68,68,.3)",
+  },
+
+  // Spinner
+  spinner: {
+    width: 22,
+    height: 22,
+    border: "3px solid #334155",
+    borderTopColor: "#6366f1",
+    borderRadius: "50%",
+    marginBottom: 14,
+    animation: "spin 1s linear infinite",
+  },
+
+  // Badges
+  roleBadge: {
+    padding: "5px 12px",
+    borderRadius: 999,
+    fontSize: 12,
+    fontWeight: 700,
+    background: "rgba(99,102,241,.18)",
+    border: "1px solid rgba(99,102,241,.4)",
+    color: "#c7d2fe",
+  },
+  copiesBadge: {
+    display: "inline-block",
+    padding: "2px 10px",
+    borderRadius: 999,
+    fontSize: 12,
+    fontWeight: 700,
+    background: "rgba(34,197,94,.12)",
+    border: "1px solid rgba(34,197,94,.3)",
+    color: "#4ade80",
+  },
+  copiesZero: {
+    background: "rgba(239,68,68,.1)",
+    border: "1px solid rgba(239,68,68,.3)",
+    color: "#f87171",
+  },
+
+  // Alerts
+  alert: {
+    padding: "12px 16px",
+    borderRadius: 10,
+    marginBottom: 16,
+    fontSize: 13,
+    fontWeight: 500,
+  },
+  alertOk: {
+    background: "rgba(34,197,94,.1)",
+    border: "1px solid rgba(34,197,94,.3)",
+    color: "#4ade80",
+  },
+  alertErr: {
+    background: "rgba(239,68,68,.1)",
+    border: "1px solid rgba(239,68,68,.3)",
+    color: "#f87171",
+  },
+
+  // Table
+  table: {
+    width: "100%",
+    borderCollapse: "collapse",
+    fontSize: 13,
+  },
+  th: {
+    textAlign: "left",
+    padding: "10px 14px",
+    color: "#64748b",
+    fontWeight: 600,
+    fontSize: 11,
+    letterSpacing: "0.06em",
+    textTransform: "uppercase",
+    borderBottom: "1px solid rgba(148,163,184,.12)",
+  },
+  td: {
+    padding: "12px 14px",
+    color: "#e2e8f0",
+    verticalAlign: "middle",
+  },
+  tdMono: {
+    fontFamily: "monospace",
+    fontSize: 12,
+    color: "#94a3b8",
+  },
+  trEven: { background: "transparent" },
+  trOdd: { background: "rgba(148,163,184,.03)" },
+
+  // Buttons
+  btnPrimary: {
+    width: "100%",
+    padding: "12px 20px",
+    fontSize: 14,
+    fontWeight: 600,
+    color: "#fff",
+    background: "linear-gradient(135deg,#6366f1,#8b5cf6)",
+    border: "none",
+    borderRadius: 9,
+    cursor: "pointer",
+  },
+  btnOutline: {
+    padding: "8px 16px",
+    fontSize: 13,
+    fontWeight: 600,
+    color: "#94a3b8",
+    background: "transparent",
+    border: "1px solid rgba(148,163,184,.25)",
+    borderRadius: 8,
+    cursor: "pointer",
+  },
+  btnDanger: {
+    padding: "6px 12px",
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: "pointer",
+    background: "rgba(239,68,68,.1)",
+    border: "1px solid rgba(239,68,68,.35)",
+    color: "#f87171",
+    borderRadius: 7,
+  },
 };
 
 export default App;
