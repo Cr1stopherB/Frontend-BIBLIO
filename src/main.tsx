@@ -11,6 +11,7 @@ const cognitoAuthConfig: AuthProviderProps = {
   redirect_uri: "http://localhost:5173",
   response_type: "code",
   scope: "email openid phone",
+  post_logout_redirect_uri: "http://localhost:5173",
   onSigninCallback: () => {
     window.history.replaceState({}, document.title, window.location.pathname);
   },
