@@ -17,6 +17,7 @@ function App() {
   const auth = useAuth();
   const [books, setBooks] = useState<Book[]>([]);
   const [loadingBooks, setLoadingBooks] = useState(false);
+  const [loadingReport, setLoadingReport] = useState(false);
   const [actionMsg, setActionMsg] = useState<{ text: string; ok: boolean } | null>(null);
 
   // ──────────────────────────────────────────────
@@ -32,7 +33,7 @@ function App() {
 
   const notify = (text: string, ok: boolean) => {
     setActionMsg({ text, ok });
-    setTimeout(() => setActionMsg(null), 3500);
+    setTimeout(() => setActionMsg(null), 4000);
   };
 
   const fetchBooks = useCallback(async () => {
@@ -66,6 +67,50 @@ function App() {
       }
     } catch (e: any) {
       notify(`Error de red: ${e.message}`, false);
+    }
+  };
+
+  // ──────────────────────────────────────────────
+  // Pruebas requeridas
+  // ──────────────────────────────────────────────
+  const probarHealth = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/health`);
+      if (res.ok) {
+        notify("Health Check Exitoso (HTTP 200). Conexión correcta con API Gateway.", true);
+      } else {
+        notify(`Health Check falló: HTTP ${res.status}`, false);
+      }
+    } catch (e: any) {
+      notify(`Error de conexión en Health Check: ${e.message}`, false);
+    }
+  };
+
+  const generarInforme = async () => {
+    setLoadingReport(true);
+    try {
+      // 1. Validar salud a través del API Gateway
+      const healthRes = await fetch(`${API_URL}/api/health`);
+      if (!healthRes.ok) {
+        throw new Error(`Health Check falló con HTTP ${healthRes.status}`);
+      }
+
+      // 2. Enviar petición al BFF para iniciar el flujo asíncrono
+      const reportRes = await fetch(`${API_URL}/api/reports`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ type: "informe" }),
+      });
+
+      if (reportRes.ok) {
+        notify("Informe solicitado exitosamente. Iniciando flujo SNS - SQS - Lambda.", true);
+      } else {
+        notify(`Error al solicitar informe: HTTP ${reportRes.status}`, false);
+      }
+    } catch (e: any) {
+      notify(`Error en el proceso: ${e.message}`, false);
+    } finally {
+      setLoadingReport(false);
     }
   };
 
@@ -116,7 +161,7 @@ function App() {
 
     return (
       <div style={s.shell}>
-        {/* ── Sidebar ── */}
+        {/* Sidebar */}
         <aside style={s.sidebar}>
           <div style={s.brand}>
             <div style={s.brandMark}>B</div>
@@ -129,9 +174,9 @@ function App() {
           </div>
 
           <nav style={{ flex: 1, marginTop: 20 }}>
-            <div style={s.navActive}>Catalogo</div>
+            <div style={s.navActive}>Catálogo</div>
             {canCreate && <div style={s.navItem}>Agregar libro</div>}
-            {isAdmin && <div style={s.navItem}>Configuracion</div>}
+            {isAdmin && <div style={s.navItem}>Configuración</div>}
           </nav>
 
           <div style={s.sidebarFooter}>
@@ -143,35 +188,48 @@ function App() {
             <button
               onClick={() => auth.removeUser()}
               style={s.iconBtn}
-              title="Cerrar sesion"
+              title="Cerrar sesión"
             >
               X
             </button>
           </div>
         </aside>
 
-        {/* ── Main ── */}
+        {/* Main */}
         <main style={s.main}>
           <header style={s.topbar}>
             <div>
-              <h1 style={s.pageTitle}>Catalogo de Libros</h1>
+              <h1 style={s.pageTitle}>Catálogo de Libros</h1>
               <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 13 }}>
                 {isAdmin
                   ? "Acceso total: puede ver, agregar, editar y eliminar libros."
                   : isColaborador
                   ? "Puede ver y agregar libros."
-                  : "Solo lectura. Consulta el catalogo disponible."}
+                  : "Solo lectura. Consulta el catálogo disponible."}
               </p>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <span style={s.roleBadge}>{roleLabel}</span>
+
+              <button onClick={probarHealth} style={s.btnHealth}>
+                Probar Health
+              </button>
+
+              <button
+                onClick={generarInforme}
+                style={s.btnReport}
+                disabled={loadingReport}
+              >
+                {loadingReport ? "Generando..." : "Generar Informe"}
+              </button>
+
               <button onClick={fetchBooks} style={s.btnOutline} disabled={loadingBooks}>
                 {loadingBooks ? "Actualizando..." : "Actualizar"}
               </button>
             </div>
           </header>
 
-          {/* Notificacion */}
+          {/* Notificación */}
           {actionMsg && (
             <div style={{ ...s.alert, ...(actionMsg.ok ? s.alertOk : s.alertErr) }}>
               {actionMsg.text}
@@ -193,7 +251,7 @@ function App() {
                 <table style={s.table}>
                   <thead>
                     <tr>
-                      <th style={s.th}>Titulo</th>
+                      <th style={s.th}>Título</th>
                       <th style={s.th}>Autor</th>
                       <th style={s.th}>ISBN</th>
                       <th style={s.th}>Copias</th>
@@ -241,8 +299,7 @@ function App() {
                 Panel Administrador
               </h3>
               <p style={{ fontSize: 13, color: "#fecaca", margin: 0 }}>
-                Solo los miembros del grupo <strong>Admin</strong> en Cognito ven esta
-                seccion. Desde aqui puede gestionar usuarios y configurar el sistema.
+                Solo los miembros del grupo Admin en Cognito ven esta sección. Desde aquí puede gestionar usuarios y configurar el sistema.
               </p>
             </section>
           )}
@@ -262,10 +319,10 @@ function App() {
           BiblioNexus
         </h2>
         <p style={{ color: "#94a3b8", marginBottom: 24, fontSize: 14 }}>
-          Sistema de gestion de biblioteca. Accede con tu cuenta de AWS Cognito.
+          Sistema de gestión de biblioteca. Accede con tu cuenta de AWS Cognito.
         </p>
         <button onClick={() => auth.signinRedirect()} style={s.btnPrimary}>
-          Iniciar sesion
+          Iniciar sesión
         </button>
       </div>
     </div>
@@ -276,7 +333,6 @@ function App() {
 // Estilos
 // ──────────────────────────────────────────────
 const s: { [k: string]: React.CSSProperties } = {
-  // Layout
   center: {
     display: "flex",
     justifyContent: "center",
@@ -293,8 +349,6 @@ const s: { [k: string]: React.CSSProperties } = {
     color: "#e2e8f0",
     fontFamily: "'Inter', system-ui, sans-serif",
   },
-
-  // Sidebar
   sidebar: {
     width: 240,
     flexShrink: 0,
@@ -381,8 +435,6 @@ const s: { [k: string]: React.CSSProperties } = {
     fontSize: 11,
     fontWeight: 700,
   },
-
-  // Main
   main: {
     flex: 1,
     padding: "32px 36px",
@@ -400,8 +452,6 @@ const s: { [k: string]: React.CSSProperties } = {
     gap: 16,
   },
   pageTitle: { margin: 0, fontSize: 24, fontWeight: 700, color: "#f8fafc" },
-
-  // Card
   card: {
     background: "rgba(17,24,39,.85)",
     border: "1px solid rgba(148,163,184,.12)",
@@ -413,8 +463,6 @@ const s: { [k: string]: React.CSSProperties } = {
     background: "linear-gradient(135deg,rgba(239,68,68,.08),rgba(139,92,246,.08))",
     border: "1px solid rgba(239,68,68,.3)",
   },
-
-  // Spinner
   spinner: {
     width: 22,
     height: 22,
@@ -422,10 +470,7 @@ const s: { [k: string]: React.CSSProperties } = {
     borderTopColor: "#6366f1",
     borderRadius: "50%",
     marginBottom: 14,
-    animation: "spin 1s linear infinite",
   },
-
-  // Badges
   roleBadge: {
     padding: "5px 12px",
     borderRadius: 999,
@@ -450,8 +495,6 @@ const s: { [k: string]: React.CSSProperties } = {
     border: "1px solid rgba(239,68,68,.3)",
     color: "#f87171",
   },
-
-  // Alerts
   alert: {
     padding: "12px 16px",
     borderRadius: 10,
@@ -469,8 +512,6 @@ const s: { [k: string]: React.CSSProperties } = {
     border: "1px solid rgba(239,68,68,.3)",
     color: "#f87171",
   },
-
-  // Table
   table: {
     width: "100%",
     borderCollapse: "collapse",
@@ -498,8 +539,6 @@ const s: { [k: string]: React.CSSProperties } = {
   },
   trEven: { background: "transparent" },
   trOdd: { background: "rgba(148,163,184,.03)" },
-
-  // Buttons
   btnPrimary: {
     width: "100%",
     padding: "12px 20px",
@@ -518,6 +557,26 @@ const s: { [k: string]: React.CSSProperties } = {
     color: "#94a3b8",
     background: "transparent",
     border: "1px solid rgba(148,163,184,.25)",
+    borderRadius: 8,
+    cursor: "pointer",
+  },
+  btnHealth: {
+    padding: "8px 16px",
+    fontSize: 13,
+    fontWeight: 600,
+    color: "#38bdf8",
+    background: "transparent",
+    border: "1px solid rgba(56,189,248,.4)",
+    borderRadius: 8,
+    cursor: "pointer",
+  },
+  btnReport: {
+    padding: "8px 16px",
+    fontSize: 13,
+    fontWeight: 600,
+    color: "#fff",
+    background: "linear-gradient(135deg, #10b981, #059669)",
+    border: "none",
     borderRadius: 8,
     cursor: "pointer",
   },
