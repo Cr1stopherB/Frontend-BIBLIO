@@ -11,7 +11,7 @@ interface Book {
 
 const API_URL =
   (import.meta.env.VITE_API_URL as string) ??
-  "https://jsmyy5o0id.execute-api.us-east-1.amazonaws.com";
+  "https://7vndo5ubd6.execute-api.us-east-1.amazonaws.com";
 
 function App() {
   const auth = useAuth();
