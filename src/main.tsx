@@ -1,25 +1,24 @@
+// index.js
 import React from "react";
 import ReactDOM from "react-dom/client";
-import App from "./App.tsx";
-import { AuthProvider, type AuthProviderProps } from "react-oidc-context";
-import "./index.css";
+import App from "./App";
+import { AuthProvider } from "react-oidc-context";
 
-// Configuración exacta vinculada a tu User Pool de Ohio
-const cognitoAuthConfig: AuthProviderProps = {
-  authority: "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_IZeH6x7sM",
-  client_id: "4pfpui5gm8026lfqdtpcdmth6r",
+const cognitoAuthConfig = {
+  authority: "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_9racJkKX7",
+  client_id: "36t79mt3ivfrbvffanqadjg1dt",
   redirect_uri: "https://frontend-biblio-chi.vercel.app",
   response_type: "code",
   scope: "email openid phone",
-  onSigninCallback: () => {
-    window.history.replaceState({}, document.title, window.location.pathname);
-  },
 };
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
+const root = ReactDOM.createRoot(document.getElementById("root"));
+
+// wrap the application with AuthProvider
+root.render(
   <React.StrictMode>
     <AuthProvider {...cognitoAuthConfig}>
       <App />
     </AuthProvider>
-  </React.StrictMode>,
+  </React.StrictMode>
 );
