@@ -23,8 +23,9 @@ function App() {
   // ──────────────────────────────────────────────
   // Helpers
   // ──────────────────────────────────────────────
+  // Forzamos el uso prioritario del id_token firmado por Cognito que exige API Gateway
   const authHeaders = useCallback((): Record<string, string> => {
-    const token = auth.user?.id_token;
+    const token = auth.user?.id_token || auth.user?.access_token;
     return {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -86,33 +87,76 @@ function App() {
     }
   };
 
+  // const generarInforme = async () => {
+  //   setLoadingReport(true);
+  //   try {
+  //     const healthRes = await fetch(`${API_URL}/api/health`);
+  //     if (!healthRes.ok) {
+  //       throw new Error(`Health Check falló con HTTP ${healthRes.status}`);
+  //     }
+
+  //     // Extraer datos reales del usuario autenticado en Cognito
+  //     const username = auth.user?.profile?.["cognito:username"] || auth.user?.profile?.email || "Admin";
+  //     const userId = auth.user?.profile?.sub || "usr-001";
+
+  //     const reportRes = await fetch(`${API_URL}/api/reports`, {
+  //       method: "POST",
+  //       headers: authHeaders(),
+  //       body: JSON.stringify({
+  //         type: "informe",
+  //         username: username,
+  //         userId: userId
+  //       }),
+  //     });
+
+  //     if (reportRes.ok) {
+  //       notify("Informe solicitado exitosamente. Flujo SNS - SQS - Lambda iniciado.", true);
+  //     } else {
+  //       const errJson = await reportRes.json().catch(() => ({}));
+  //       notify(`Error al solicitar informe: HTTP ${reportRes.status} (${errJson.message || 'Unauthorized'})`, false);
+  //     }
+  //   } catch (e: any) {
+  //     notify(`Error en el proceso: ${e.message}`, false);
+  //   } finally {
+  //     setLoadingReport(false);
+  //   }
+  // };
   const generarInforme = async () => {
-    setLoadingReport(true);
-    try {
-      // 1. Validar salud a través del API Gateway
-      const healthRes = await fetch(`${API_URL}/api/health`);
-      if (!healthRes.ok) {
-        throw new Error(`Health Check falló con HTTP ${healthRes.status}`);
-      }
-
-      // 2. Enviar petición al BFF para iniciar el flujo asíncrono
-      const reportRes = await fetch(`${API_URL}/api/reports`, {
-        method: "POST",
-        headers: authHeaders(),
-        body: JSON.stringify({ type: "informe" }),
-      });
-
-      if (reportRes.ok) {
-        notify("Informe solicitado exitosamente. Iniciando flujo SNS - SQS - Lambda.", true);
-      } else {
-        notify(`Error al solicitar informe: HTTP ${reportRes.status}`, false);
-      }
-    } catch (e: any) {
-      notify(`Error en el proceso: ${e.message}`, false);
-    } finally {
-      setLoadingReport(false);
+  setLoadingReport(true);
+  try {
+    const healthRes = await fetch(`${API_URL}/api/health`);
+    if (!healthRes.ok) {
+      throw new Error(`Health Check falló con HTTP ${healthRes.status}`);
     }
-  };
+
+    const username = auth.user?.profile?.["cognito:username"] || auth.user?.profile?.email || "Admin";
+    const userId = auth.user?.profile?.sub || "usr-001";
+
+    const reportRes = await fetch(`${API_URL}/api/reports`, {
+      method: "POST",
+      headers: {
+        ...authHeaders(),
+        "x-api-secret": "HolaMundo123" // Inyección directa del secreto
+      },
+      body: JSON.stringify({
+        type: "informe",
+        username: username,
+        userId: userId
+      }),
+    });
+
+    if (reportRes.ok) {
+      notify("Informe solicitado exitosamente. Iniciando flujo SNS - SQS - Lambda.", true);
+    } else {
+      const errJson = await reportRes.json().catch(() => ({}));
+      notify(`Error al solicitar informe: HTTP ${reportRes.status} (${errJson.error || errJson.message || 'Error'})`, false);
+    }
+  } catch (e: any) {
+    notify(`Error en el proceso: ${e.message}`, false);
+  } finally {
+    setLoadingReport(false);
+  }
+};
 
   // ──────────────────────────────────────────────
   // Estados de Cognito
