@@ -96,7 +96,12 @@ function App() {
         throw new Error(`Health Check falló con HTTP ${healthRes.status}`);
       }
 
-      const username = auth.user?.profile?.["cognito:username"] || auth.user?.profile?.email || "Admin";
+      // Extraemos el correo real. Si no viniera, usa 'preferred_username' o 'Admin'
+      const userEmail =
+        auth.user?.profile?.email ||
+        auth.user?.profile?.["preferred_username"] ||
+        "admin@biblionexus.com";
+
       const userId = auth.user?.profile?.sub || "usr-001";
 
       const reportRes = await fetch(`${API_URL}/api/reports`, {
@@ -104,7 +109,7 @@ function App() {
         headers: authHeaders(),
         body: JSON.stringify({
           type: "informe",
-          username: username,
+          username: userEmail, // Mandamos el correo legible
           userId: userId
         }),
       });
@@ -113,7 +118,7 @@ function App() {
         notify("Informe solicitado exitosamente. Iniciando flujo SNS - SQS - Lambda.", true);
       } else {
         const errJson = await reportRes.json().catch(() => ({}));
-        notify(`Error al solicitar informe: HTTP ${reportRes.status} (${errJson.error || errJson.message || 'Error'})`, false);
+        notify(`Error al solicitar informe: HTTP ${reportRes.status}`, false);
       }
     } catch (e: any) {
       notify(`Error en el proceso: ${e.message}`, false);
