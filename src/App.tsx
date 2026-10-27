@@ -118,10 +118,9 @@ function App() {
         notify("Informe solicitado exitosamente. Iniciando flujo SNS - SQS - Lambda.", true);
       } else {
         const errJson = await reportRes.json().catch(() => ({}));
-        notify(`Error al solicitar informe: HTTP ${reportRes.status}`, false);
+        // Usamos errJson.error o errJson.message para que TypeScript no reclame
+        notify(`Error al solicitar informe: HTTP ${reportRes.status} (${errJson.error || errJson.message || 'Error'})`, false);
       }
-    } catch (e: any) {
-      notify(`Error en el proceso: ${e.message}`, false);
     } finally {
       setLoadingReport(false);
     }
