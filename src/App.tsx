@@ -28,6 +28,7 @@ function App() {
     const token = auth.user?.id_token || auth.user?.access_token;
     return {
       "Content-Type": "application/json",
+      "x-api-secret": "HolaMundo123",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };
   }, [auth.user]);
@@ -87,76 +88,39 @@ function App() {
     }
   };
 
-  // const generarInforme = async () => {
-  //   setLoadingReport(true);
-  //   try {
-  //     const healthRes = await fetch(`${API_URL}/api/health`);
-  //     if (!healthRes.ok) {
-  //       throw new Error(`Health Check falló con HTTP ${healthRes.status}`);
-  //     }
-
-  //     // Extraer datos reales del usuario autenticado en Cognito
-  //     const username = auth.user?.profile?.["cognito:username"] || auth.user?.profile?.email || "Admin";
-  //     const userId = auth.user?.profile?.sub || "usr-001";
-
-  //     const reportRes = await fetch(`${API_URL}/api/reports`, {
-  //       method: "POST",
-  //       headers: authHeaders(),
-  //       body: JSON.stringify({
-  //         type: "informe",
-  //         username: username,
-  //         userId: userId
-  //       }),
-  //     });
-
-  //     if (reportRes.ok) {
-  //       notify("Informe solicitado exitosamente. Flujo SNS - SQS - Lambda iniciado.", true);
-  //     } else {
-  //       const errJson = await reportRes.json().catch(() => ({}));
-  //       notify(`Error al solicitar informe: HTTP ${reportRes.status} (${errJson.message || 'Unauthorized'})`, false);
-  //     }
-  //   } catch (e: any) {
-  //     notify(`Error en el proceso: ${e.message}`, false);
-  //   } finally {
-  //     setLoadingReport(false);
-  //   }
-  // };
   const generarInforme = async () => {
-  setLoadingReport(true);
-  try {
-    const healthRes = await fetch(`${API_URL}/api/health`);
-    if (!healthRes.ok) {
-      throw new Error(`Health Check falló con HTTP ${healthRes.status}`);
+    setLoadingReport(true);
+    try {
+      const healthRes = await fetch(`${API_URL}/api/health`);
+      if (!healthRes.ok) {
+        throw new Error(`Health Check falló con HTTP ${healthRes.status}`);
+      }
+
+      const username = auth.user?.profile?.["cognito:username"] || auth.user?.profile?.email || "Admin";
+      const userId = auth.user?.profile?.sub || "usr-001";
+
+      const reportRes = await fetch(`${API_URL}/api/reports`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          type: "informe",
+          username: username,
+          userId: userId
+        }),
+      });
+
+      if (reportRes.ok) {
+        notify("Informe solicitado exitosamente. Iniciando flujo SNS - SQS - Lambda.", true);
+      } else {
+        const errJson = await reportRes.json().catch(() => ({}));
+        notify(`Error al solicitar informe: HTTP ${reportRes.status} (${errJson.error || errJson.message || 'Error'})`, false);
+      }
+    } catch (e: any) {
+      notify(`Error en el proceso: ${e.message}`, false);
+    } finally {
+      setLoadingReport(false);
     }
-
-    const username = auth.user?.profile?.["cognito:username"] || auth.user?.profile?.email || "Admin";
-    const userId = auth.user?.profile?.sub || "usr-001";
-
-    const reportRes = await fetch(`${API_URL}/api/reports`, {
-      method: "POST",
-      headers: {
-        ...authHeaders(),
-        "x-api-secret": "HolaMundo123" // Inyección directa del secreto
-      },
-      body: JSON.stringify({
-        type: "informe",
-        username: username,
-        userId: userId
-      }),
-    });
-
-    if (reportRes.ok) {
-      notify("Informe solicitado exitosamente. Iniciando flujo SNS - SQS - Lambda.", true);
-    } else {
-      const errJson = await reportRes.json().catch(() => ({}));
-      notify(`Error al solicitar informe: HTTP ${reportRes.status} (${errJson.error || errJson.message || 'Error'})`, false);
-    }
-  } catch (e: any) {
-    notify(`Error en el proceso: ${e.message}`, false);
-  } finally {
-    setLoadingReport(false);
-  }
-};
+  };
 
   // ──────────────────────────────────────────────
   // Estados de Cognito
@@ -200,8 +164,8 @@ function App() {
     const roleLabel = isAdmin
       ? "Administrador"
       : isColaborador
-      ? "Colaborador"
-      : "Cliente";
+        ? "Colaborador"
+        : "Cliente";
 
     return (
       <div style={s.shell}>
@@ -248,8 +212,8 @@ function App() {
                 {isAdmin
                   ? "Acceso total: puede ver, agregar, editar y eliminar libros."
                   : isColaborador
-                  ? "Puede ver y agregar libros."
-                  : "Solo lectura. Consulta el catálogo disponible."}
+                    ? "Puede ver y agregar libros."
+                    : "Solo lectura. Consulta el catálogo disponible."}
               </p>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
