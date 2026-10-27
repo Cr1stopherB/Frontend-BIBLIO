@@ -23,7 +23,6 @@ function App() {
   // ──────────────────────────────────────────────
   // Helpers
   // ──────────────────────────────────────────────
-  // Forzamos el uso prioritario del id_token firmado por Cognito que exige API Gateway
   const authHeaders = useCallback((): Record<string, string> => {
     const token = auth.user?.id_token || auth.user?.access_token;
     return {
@@ -43,7 +42,31 @@ function App() {
     try {
       const res = await fetch(`${API_URL}/api/books`, { headers: authHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setBooks(await res.json());
+
+      const rawData = await res.json();
+      console.log("Respuesta exacta del Backend:", rawData);
+
+      // Mapeo exhaustivo para garantizar que se muestren los datos recibidos
+      const mappedBooks: Book[] = rawData.map((item: any, index: number) => {
+        // En caso de que el objeto venga envuelto
+        const b = item.book || item.libro || item;
+
+        return {
+          id: String(b.id || b._id || b.id_libro || index + 1),
+          // Prioriza titulo -> title -> nombre -> fallback
+          title: b.titulo || b.title || b.nombre || "Sin título registrado",
+          // Prioriza autor -> author -> writer -> fallback
+          author: b.autor || b.author || b.writer || "Autor desconocido",
+          // Prioriza isbn -> categoria (si no existe isbn) -> fallback
+          isbn: b.isbn || b.ISBN || b.categoria || "N/A",
+          // Prioriza copias -> availableCopies -> available_copies -> stock -> 0
+          availableCopies: Number(
+            b.copias ?? b.availableCopies ?? b.available_copies ?? b.stock ?? 0
+          ),
+        };
+      });
+
+      setBooks(mappedBooks);
     } catch (e: any) {
       notify(`Error al cargar libros: ${e.message}`, false);
     } finally {
@@ -55,13 +78,14 @@ function App() {
     if (auth.isAuthenticated) fetchBooks();
   }, [auth.isAuthenticated, fetchBooks]);
 
-  const deleteBook = async (id: string) => {
+  const deleteBook = async (id: string | number) => {
+    if (!id) return;
     try {
       const res = await fetch(`${API_URL}/api/books/${id}`, {
         method: "DELETE",
         headers: authHeaders(),
       });
-      if (res.status === 204) {
+      if (res.status === 204 || res.ok) {
         notify("Libro eliminado.", true);
         fetchBooks();
       } else {
@@ -96,7 +120,6 @@ function App() {
         throw new Error(`Health Check falló con HTTP ${healthRes.status}`);
       }
 
-      // Extraemos el correo real. Si no viniera, usa 'preferred_username' o 'Admin'
       const userEmail =
         auth.user?.profile?.email ||
         auth.user?.profile?.["preferred_username"] ||
@@ -109,8 +132,8 @@ function App() {
         headers: authHeaders(),
         body: JSON.stringify({
           type: "informe",
-          username: userEmail, // Mandamos el correo legible
-          userId: userId
+          username: userEmail,
+          userId: userId,
         }),
       });
 
@@ -118,9 +141,10 @@ function App() {
         notify("Informe solicitado exitosamente. Iniciando flujo SNS - SQS - Lambda.", true);
       } else {
         const errJson = await reportRes.json().catch(() => ({}));
-        // Usamos errJson.error o errJson.message para que TypeScript no reclame
         notify(`Error al solicitar informe: HTTP ${reportRes.status} (${errJson.error || errJson.message || 'Error'})`, false);
       }
+    } catch (e: any) {
+      notify(`Error en el proceso: ${e.message}`, false);
     } finally {
       setLoadingReport(false);
     }
@@ -265,14 +289,14 @@ function App() {
                     <tr>
                       <th style={s.th}>Título</th>
                       <th style={s.th}>Autor</th>
-                      <th style={s.th}>ISBN</th>
+                      <th style={s.th}>ISBN / Categoría</th>
                       <th style={s.th}>Copias</th>
                       {canModify && <th style={s.th}>Acciones</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {books.map((book, i) => (
-                      <tr key={book.id} style={i % 2 === 0 ? s.trEven : s.trOdd}>
+                      <tr key={book.id || i} style={i % 2 === 0 ? s.trEven : s.trOdd}>
                         <td style={s.td}>{book.title}</td>
                         <td style={s.td}>{book.author}</td>
                         <td style={{ ...s.td, ...s.tdMono }}>{book.isbn}</td>
