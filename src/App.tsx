@@ -18,7 +18,19 @@ function App() {
   const [books, setBooks] = useState<Book[]>([]);
   const [loadingBooks, setLoadingBooks] = useState(false);
   const [loadingReport, setLoadingReport] = useState(false);
+  const [loadingAdd, setLoadingAdd] = useState(false);
   const [actionMsg, setActionMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
+  // Control de vistas (Catálogo / Agregar)
+  const [activeTab, setActiveTab] = useState<"catalogo" | "agregar">("catalogo");
+
+  // Estado del formulario de agregar libro
+  const [newBook, setNewBook] = useState({
+    titulo: "",
+    autor: "",
+    categoria: "",
+    copias: 1,
+  });
 
   // ──────────────────────────────────────────────
   // Helpers
@@ -44,22 +56,14 @@ function App() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const rawData = await res.json();
-      console.log("Respuesta exacta del Backend:", rawData);
 
-      // Mapeo exhaustivo para garantizar que se muestren los datos recibidos
       const mappedBooks: Book[] = rawData.map((item: any, index: number) => {
-        // En caso de que el objeto venga envuelto
         const b = item.book || item.libro || item;
-
         return {
           id: String(b.id || b._id || b.id_libro || index + 1),
-          // Prioriza titulo -> title -> nombre -> fallback
           title: b.titulo || b.title || b.nombre || "Sin título registrado",
-          // Prioriza autor -> author -> writer -> fallback
           author: b.autor || b.author || b.writer || "Autor desconocido",
-          // Prioriza isbn -> categoria (si no existe isbn) -> fallback
           isbn: b.isbn || b.ISBN || b.categoria || "N/A",
-          // Prioriza copias -> availableCopies -> available_copies -> stock -> 0
           availableCopies: Number(
             b.copias ?? b.availableCopies ?? b.available_copies ?? b.stock ?? 0
           ),
@@ -77,6 +81,45 @@ function App() {
   useEffect(() => {
     if (auth.isAuthenticated) fetchBooks();
   }, [auth.isAuthenticated, fetchBooks]);
+
+  // ──────────────────────────────────────────────
+  // Agregar Libro (POST /api/books)
+  // ──────────────────────────────────────────────
+  const handleAddBook = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newBook.titulo || !newBook.autor) {
+      notify("Por favor completa al menos el título y el autor.", false);
+      return;
+    }
+
+    setLoadingAdd(true);
+    try {
+      const res = await fetch(`${API_URL}/api/books`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          titulo: newBook.titulo,
+          autor: newBook.autor,
+          categoria: newBook.categoria || "General",
+          copias: Number(newBook.copias) || 1,
+        }),
+      });
+
+      if (res.ok || res.status === 201) {
+        notify("¡Libro agregado exitosamente a la base de datos!", true);
+        setNewBook({ titulo: "", autor: "", categoria: "", copias: 1 });
+        setActiveTab("catalogo");
+        fetchBooks();
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        notify(`Error al agregar libro: HTTP ${res.status} (${errJson.message || 'Error'})`, false);
+      }
+    } catch (e: any) {
+      notify(`Error de red al agregar libro: ${e.message}`, false);
+    } finally {
+      setLoadingAdd(false);
+    }
+  };
 
   const deleteBook = async (id: string | number) => {
     if (!id) return;
@@ -96,9 +139,6 @@ function App() {
     }
   };
 
-  // ──────────────────────────────────────────────
-  // Pruebas requeridas
-  // ──────────────────────────────────────────────
   const probarHealth = async () => {
     try {
       const res = await fetch(`${API_URL}/api/health`);
@@ -151,7 +191,7 @@ function App() {
   };
 
   // ──────────────────────────────────────────────
-  // Estados de Cognito
+  // Vistas de Sesión
   // ──────────────────────────────────────────────
   if (auth.isLoading) {
     return (
@@ -178,9 +218,6 @@ function App() {
     );
   }
 
-  // ──────────────────────────────────────────────
-  // Vista autenticada
-  // ──────────────────────────────────────────────
   if (auth.isAuthenticated) {
     const groups = (auth.user?.profile["cognito:groups"] as string[]) ?? [];
     const email = auth.user?.profile.email as string;
@@ -210,9 +247,20 @@ function App() {
           </div>
 
           <nav style={{ flex: 1, marginTop: 20 }}>
-            <div style={s.navActive}>Catálogo</div>
-            {canCreate && <div style={s.navItem}>Agregar libro</div>}
-            {isAdmin && <div style={s.navItem}>Configuración</div>}
+            <div
+              onClick={() => setActiveTab("catalogo")}
+              style={activeTab === "catalogo" ? s.navActive : s.navItem}
+            >
+              Catálogo
+            </div>
+            {canCreate && (
+              <div
+                onClick={() => setActiveTab("agregar")}
+                style={activeTab === "agregar" ? s.navActive : s.navItem}
+              >
+                Agregar libro
+              </div>
+            )}
           </nav>
 
           <div style={s.sidebarFooter}>
@@ -235,7 +283,9 @@ function App() {
         <main style={s.main}>
           <header style={s.topbar}>
             <div>
-              <h1 style={s.pageTitle}>Catálogo de Libros</h1>
+              <h1 style={s.pageTitle}>
+                {activeTab === "catalogo" ? "Catálogo de Libros" : "Nuevo Libro"}
+              </h1>
               <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 13 }}>
                 {isAdmin
                   ? "Acceso total: puede ver, agregar, editar y eliminar libros."
@@ -272,63 +322,136 @@ function App() {
             </div>
           )}
 
-          {/* Tabla de libros */}
-          <section style={s.card}>
-            {loadingBooks && books.length === 0 ? (
-              <p style={{ color: "#64748b", textAlign: "center", padding: 32 }}>
-                Cargando libros...
-              </p>
-            ) : books.length === 0 ? (
-              <p style={{ color: "#64748b", textAlign: "center", padding: 32 }}>
-                No hay libros disponibles.
-              </p>
-            ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={s.table}>
-                  <thead>
-                    <tr>
-                      <th style={s.th}>Título</th>
-                      <th style={s.th}>Autor</th>
-                      <th style={s.th}>ISBN / Categoría</th>
-                      <th style={s.th}>Copias</th>
-                      {canModify && <th style={s.th}>Acciones</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {books.map((book, i) => (
-                      <tr key={book.id || i} style={i % 2 === 0 ? s.trEven : s.trOdd}>
-                        <td style={s.td}>{book.title}</td>
-                        <td style={s.td}>{book.author}</td>
-                        <td style={{ ...s.td, ...s.tdMono }}>{book.isbn}</td>
-                        <td style={{ ...s.td, textAlign: "center" }}>
-                          <span
-                            style={{
-                              ...s.copiesBadge,
-                              ...(book.availableCopies === 0 ? s.copiesZero : {}),
-                            }}
-                          >
-                            {book.availableCopies}
-                          </span>
-                        </td>
-                        {canModify && (
-                          <td style={s.td}>
-                            <button
-                              onClick={() => deleteBook(book.id)}
-                              style={s.btnDanger}
-                            >
-                              Eliminar
-                            </button>
-                          </td>
-                        )}
+          {/* Tab 1: Tabla de Libros */}
+          {activeTab === "catalogo" && (
+            <section style={s.card}>
+              {loadingBooks && books.length === 0 ? (
+                <p style={{ color: "#64748b", textAlign: "center", padding: 32 }}>
+                  Cargando libros...
+                </p>
+              ) : books.length === 0 ? (
+                <p style={{ color: "#64748b", textAlign: "center", padding: 32 }}>
+                  No hay libros disponibles.
+                </p>
+              ) : (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={s.table}>
+                    <thead>
+                      <tr>
+                        <th style={s.th}>Título</th>
+                        <th style={s.th}>Autor</th>
+                        <th style={s.th}>Categoría / ISBN</th>
+                        <th style={s.th}>Copias</th>
+                        {canModify && <th style={s.th}>Acciones</th>}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
+                    </thead>
+                    <tbody>
+                      {books.map((book, i) => (
+                        <tr key={book.id || i} style={i % 2 === 0 ? s.trEven : s.trOdd}>
+                          <td style={s.td}>{book.title}</td>
+                          <td style={s.td}>{book.author}</td>
+                          <td style={{ ...s.td, ...s.tdMono }}>{book.isbn}</td>
+                          <td style={{ ...s.td, textAlign: "center" }}>
+                            <span
+                              style={{
+                                ...s.copiesBadge,
+                                ...(book.availableCopies === 0 ? s.copiesZero : {}),
+                              }}
+                            >
+                              {book.availableCopies}
+                            </span>
+                          </td>
+                          {canModify && (
+                            <td style={s.td}>
+                              <button
+                                onClick={() => deleteBook(book.id)}
+                                style={s.btnDanger}
+                              >
+                                Eliminar
+                              </button>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          )}
 
-          {/* Panel admin */}
+          {/* Tab 2: Formulario Agregar Libro */}
+          {activeTab === "agregar" && canCreate && (
+            <section style={{ ...s.card, maxWidth: 600 }}>
+              <h2 style={{ fontSize: 18, margin: "0 0 16px", color: "#f8fafc" }}>
+                Registrar un Nuevo Libro
+              </h2>
+              <form onSubmit={handleAddBook} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <div>
+                  <label style={s.label}>Título</label>
+                  <input
+                    type="text"
+                    placeholder="Ej: Cien Años de Soledad"
+                    value={newBook.titulo}
+                    onChange={(e) => setNewBook({ ...newBook, titulo: e.target.value })}
+                    style={s.input}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label style={s.label}>Autor</label>
+                  <input
+                    type="text"
+                    placeholder="Ej: Gabriel García Márquez"
+                    value={newBook.autor}
+                    onChange={(e) => setNewBook({ ...newBook, autor: e.target.value })}
+                    style={s.input}
+                    required
+                  />
+                </div>
+
+                <div style={{ display: "flex", gap: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={s.label}>Categoría / ISBN</label>
+                    <input
+                      type="text"
+                      placeholder="Ej: Novela"
+                      value={newBook.categoria}
+                      onChange={(e) => setNewBook({ ...newBook, categoria: e.target.value })}
+                      style={s.input}
+                    />
+                  </div>
+                  <div style={{ width: 120 }}>
+                    <label style={s.label}>Copias</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={newBook.copias}
+                      onChange={(e) => setNewBook({ ...newBook, copias: Number(e.target.value) })}
+                      style={s.input}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+                  <button type="submit" style={s.btnPrimary} disabled={loadingAdd}>
+                    {loadingAdd ? "Guardando..." : "Guardar Libro"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("catalogo")}
+                    style={s.btnOutline}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </form>
+            </section>
+          )}
+
+          {/* Panel Admin */}
           {isAdmin && (
             <section style={{ ...s.card, ...s.adminCard }}>
               <h3 style={{ color: "#fca5a5", margin: "0 0 8px", fontSize: 15 }}>
@@ -344,9 +467,6 @@ function App() {
     );
   }
 
-  // ──────────────────────────────────────────────
-  // Vista login
-  // ──────────────────────────────────────────────
   return (
     <div style={s.center}>
       <div style={s.card}>
@@ -419,8 +539,9 @@ const s: { [k: string]: React.CSSProperties } = {
     borderRadius: 8,
     color: "#64748b",
     fontSize: 14,
-    marginBottom: 2,
+    marginBottom: 4,
     cursor: "pointer",
+    transition: "0.2s",
   },
   navActive: {
     padding: "10px 12px",
@@ -430,7 +551,8 @@ const s: { [k: string]: React.CSSProperties } = {
     color: "#fff",
     background: "rgba(99,102,241,.18)",
     border: "1px solid rgba(99,102,241,.35)",
-    marginBottom: 2,
+    marginBottom: 4,
+    cursor: "pointer",
   },
   sidebarFooter: {
     display: "flex",
@@ -575,15 +697,33 @@ const s: { [k: string]: React.CSSProperties } = {
   },
   trEven: { background: "transparent" },
   trOdd: { background: "rgba(148,163,184,.03)" },
+  label: {
+    display: "block",
+    fontSize: 12,
+    fontWeight: 600,
+    color: "#94a3b8",
+    marginBottom: 6,
+  },
+  input: {
+    width: "100%",
+    padding: "10px 12px",
+    fontSize: 13,
+    borderRadius: 8,
+    border: "1px solid rgba(148,163,184,.2)",
+    background: "#0f172a",
+    color: "#f8fafc",
+    outline: "none",
+    boxSizing: "border-box",
+  },
   btnPrimary: {
     width: "100%",
-    padding: "12px 20px",
-    fontSize: 14,
+    padding: "10px 20px",
+    fontSize: 13,
     fontWeight: 600,
     color: "#fff",
     background: "linear-gradient(135deg,#6366f1,#8b5cf6)",
     border: "none",
-    borderRadius: 9,
+    borderRadius: 8,
     cursor: "pointer",
   },
   btnOutline: {
